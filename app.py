@@ -1,62 +1,54 @@
 from typing import Any, List, Dict
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import pandas as pd
 
 from spreadsheet import Spreadsheet
 
 
-app = FastAPI(title="Spreadsheet API")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-
-ss = Spreadsheet(rows=5, cols=5)
+app = FastAPI(title="Spreadsheet API + UI")
+ss = Spreadsheet(rows=20, cols=20)
 
 class SetValuePayload(BaseModel):
     cell: str
     value: Any
 
+
 class SetFormulaPayload(BaseModel):
     cell: str
     formula: str
 
+
 def _to_jsonable(x: Any) -> Any:
-    # primitives
     if x is None or isinstance(x, (str, int, float, bool)):
         return x
-    # pandas missing values -> None
     try:
         if pd.isna(x):
             return None
     except Exception:
         pass
-    # numpy scalars
     try:
-        import numpy as np  # optional dependency, ignore if missing
+        import numpy as np
         if isinstance(x, np.generic):
             return x.item()
     except Exception:
         pass
-    # formulas Array or other iterables -> list
     try:
         from collections.abc import Iterable
         if isinstance(x, Iterable) and not isinstance(x, (str, bytes)):
             return [_to_jsonable(v) for v in x]
     except Exception:
         pass
-    # fallback to string
     try:
         return str(x)
     except Exception:
         return None
+
+
+@app.get("/")
+def serve_index():
+    return FileResponse("index.html", media_type="text/html")
 
 @app.post("/value")
 def set_value(payload: SetValuePayload) -> Dict[str, Any]:
@@ -74,12 +66,10 @@ def get_value(cell: str) -> Dict[str, Any]:
 
 @app.get("/formula/{cell}")
 def get_formula(cell: str):
-    formula = ss.table.formulas.get(cell)
-    return {"cell": cell, "formula": formula}
+    return {"cell": cell, "formula": ss.table.formulas.get(cell)}
 
 @app.get("/sheet")
 def get_sheet() -> Dict[str, Any]:
-    # use dtype=object so we don’t coerce to NaN or numpy types unexpectedly
     arr = ss.table.df.to_numpy(dtype=object)
     data: List[List[Any]] = [[_to_jsonable(v) for v in row] for row in arr]
     cols = list(ss.table.df.columns)

@@ -5,22 +5,101 @@
   <title>Spreadsheet UI (minimal)</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <style>
+    :root { --colw: 120px; }
     body { font-family: system-ui, sans-serif; margin: 20px; }
     h1 { font-size: 18px; margin: 0 0 12px; }
     .controls { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; align-items: center; }
     .controls input { padding: 6px 8px; }
     .controls button { padding: 6px 10px; cursor: pointer; }
-    table { border-collapse: collapse; width: 100%; max-width: 100%; table-layout: fixed; }
-    th, td { border: 1px solid #ddd; padding: 6px 8px; text-overflow: ellipsis; overflow: hidden; white-space: nowrap; }
-    th { background: #f5f5f5; position: sticky; top: 0; }
-    td:hover { background: #fff9db; cursor: pointer; }
     .muted { color: #666; }
+
+    /* Scrollable grid container */
+    .sheet-wrap {
+      border: 1px solid #e5e7eb;
+      height: 70vh;            /* vertical space for scrolling */
+      max-width: 100%;
+      overflow: auto;          /* both horizontal and vertical scrolls */
+      background: #fff;
+    }
+
+    table {
+      border-collapse: collapse;
+      table-layout: fixed;     /* respect fixed cell widths */
+      width: auto;             /* expand as needed; wrapper will scroll */
+    }
+
+    th, td {
+      border: 1px solid #ddd;
+      padding: 6px 8px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+
+      /* fixed column width */
+      width: var(--colw);
+      min-width: var(--colw);
+      max-width: var(--colw);
+    }
+
+    th {
+      background: #f5f5f5;
+      position: sticky;
+      top: 0;                  /* sticky header on vertical scroll */
+      z-index: 1;
+    }
+
+    td:hover { background: #fff9db; cursor: pointer; }
+
+    /* Row-number column (not part of data columns) */
+    .rownum {
+      width: 60px !important;
+      min-width: 60px !important;
+      max-width: 60px !important;
+      text-align: right;
+      color: #666;
+      background: #fafafa;
+    }
+
     #status { margin-top: 10px; min-height: 18px; }
-    .rownum { background: #fafafa; width: 46px; text-align: right; color: #666; }
   </style>
 </head>
 <body>
   <h1>Spreadsheet (API client)</h1>
+
+  <div class="help">
+    <h2>How it works (super short):</h2>
+    <ul>
+      <li><b>View spreadsheet:</b> Loads automatically. Click <code>Refresh</code> anytime.</li>
+      <li><b>Edit a cell:</b> Click a cell → enter a <i>value</i> (e.g. <code>123</code>) or a <i>formula</i> starting with <code>=</code>.</li>
+      <li><b>See formulas:</b> Clicking a formula cell shows the <code>=formula</code> in the editor instead of the computed value.</li>
+      <li><b>Add row / column:</b> Use <code>Add Row</code> or <code>Add Column</code>; the sheet auto-expands like Excel.</li>
+      <li><b>Auto-recalc:</b> Changing a referenced cell recomputes all dependent formulas.</li>
+    </ul>
+
+    <h2>Formulas you can use:</h2>
+    <ul>
+      <li><b>Operators:</b> <code>+</code> <code>-</code> <code>*</code> <code>/</code> <code>^</code> (power), parentheses <code>( )</code></li>
+      <li><b>Common functions:</b> <code>SUM</code>, <code>AVERAGE</code>, <code>MIN</code>, <code>MAX</code>, <code>COUNT</code></li>
+      <li><b>Logic:</b> <code>IF</code>, <code>AND</code>, <code>OR</code>, <code>NOT</code>, comparisons <code>&gt;</code> <code>&gt;=</code> <code>&lt;</code> <code>&lt;=</code> <code>=</code> <code>&lt;&gt;</code></li>
+      <li><b>Conditional aggregations:</b> <code>SUMIF</code>, <code>COUNTIF</code>, <code>AVERAGEIF</code> (and their <code>*IFS</code> variants may work depending on expression)</li>
+    </ul>
+
+    <h2>Ranges & examples:</h2>
+    <ul>
+      <li><b>Single cell:</b> <code>A1</code></li>
+      <li><b>Row/column block:</b> <code>A1:A10</code>, <code>A1:B3</code></li>
+      <li><b>Mixed args:</b> you can combine ranges and cells in one function</li>
+    </ul>
+    <ul>
+      <li><code>=A1+B1</code></li>
+      <li><code>=SUM(A1:A5)</code></li>
+      <li><code>=AVERAGE(B2:B10)</code></li>
+      <li><code>=IF(C2&gt;100,"OK","NO")</code></li>
+      <li><code>=SUMIF(A1:A10,"&gt;10",B1:B10)</code></li>
+      <li><code>=SUM(A1:A3, C1, D2:D3)</code></li>
+    </ul>
+    <div class="muted">Tip: values that look numeric are sent as numbers; empty input clears to <code>null</code>.</div>
+  </div>
 
   <div class="controls">
     <label>Cell <input id="cell" placeholder="e.g. B3" /></label>
@@ -29,22 +108,18 @@
     <button id="addRow">Add Row</button>
     <button id="addCol">Add Column</button>
     <button id="refresh">Refresh</button>
-    <span class="muted">Tip: click any cell to edit inline (enter value or a formula starting with "=").</span>
+    <span class="muted">Click a cell to edit (shows formula if present).</span>
   </div>
 
-  <div id="sheetWrap">
+  <div class="sheet-wrap">
     <table id="sheet"></table>
   </div>
 
   <div id="status" class="muted"></div>
 
   <script>
-    // --- CONFIG ---
-    // If your API runs on the same origin, you can set BASE = ''.
-    // Otherwise, put your FastAPI base here:
-    const BASE = 'http://127.0.0.1:8000';
+    const BASE = ''; // same-origin with FastAPI
 
-    // --- Helpers ---
     function showStatus(msg, isError=false) {
       const el = document.getElementById('status');
       el.textContent = msg || '';
@@ -52,30 +127,9 @@
     }
 
     function idxToCol(idx) {
-      // 0 -> A, 25 -> Z, 26 -> AA ...
-      let s = '';
-      idx = idx + 1;
-      while (idx > 0) {
-        let r = (idx - 1) % 26;
-        s = String.fromCharCode(65 + r) + s;
-        idx = Math.floor((idx - 1) / 26);
-      }
+      let s = ''; idx = idx + 1;
+      while (idx > 0) { const r = (idx - 1) % 26; s = String.fromCharCode(65 + r) + s; idx = Math.floor((idx - 1) / 26); }
       return s;
-    }
-
-    function colToIdx(col) {
-      // A -> 0, Z -> 25, AA -> 26 ...
-      let n = 0;
-      for (const ch of col.toUpperCase()) {
-        n = n * 26 + (ch.charCodeAt(0) - 64);
-      }
-      return n - 1;
-    }
-
-    function parseCell(a1) {
-      const m = String(a1).trim().match(/^([A-Za-z]+)(\d+)$/);
-      if (!m) throw new Error('Invalid cell: ' + a1);
-      return { col: m[1].toUpperCase(), row: parseInt(m[2], 10) };
     }
 
     async function apiGet(path) {
@@ -94,21 +148,19 @@
     }
 
     async function getFormula(cell) {
-        const res = await apiGet(`/formula/${cell}`);
-        return res.formula ?? null;
+      const res = await apiGet(`/formula/${cell}`);
+      return res.formula ?? null;
     }
 
-
     async function setCell(cell, valueOrFormula) {
-      if (String(valueOrFormula).trim().startsWith('=')) {
-        return apiPost('/formula', { cell, formula: String(valueOrFormula).trim() });
-      } else {
-        // Try to cast numbers if they look numeric; otherwise leave as string
-        let v = valueOrFormula;
-        if (v === '') v = null;
-        else if (!isNaN(v) && v.trim !== undefined) v = Number(v);
-        return apiPost('/value', { cell, value: v });
+      const s = String(valueOrFormula ?? '').trim();
+      if (s.startsWith('=')) {
+        return apiPost('/formula', { cell, formula: s });
       }
+      let v = valueOrFormula;
+      if (s === '') v = null;
+      else if (!isNaN(s)) v = Number(s);
+      return apiPost('/value', { cell, value: v });
     }
 
     function renderSheet(payload) {
@@ -123,9 +175,9 @@
       rowHdr.className = 'rownum';
       rowHdr.textContent = '#';
       hr.appendChild(rowHdr);
-      for (let c = 0; c < columns.length; c++) {
+      for (const col of columns) {
         const th = document.createElement('th');
-        th.textContent = columns[c];
+        th.textContent = col;
         hr.appendChild(th);
       }
       thead.appendChild(hr);
@@ -142,22 +194,15 @@
 
         for (let c = 0; c < columns.length; c++) {
           const td = document.createElement('td');
-          const colLetter = columns[c]; // server already gives A,B,C...
-          const a1 = `${colLetter}${r + 1}`;
+          const a1 = `${columns[c]}${r + 1}`;
           const v = data[r][c];
           td.dataset.cell = a1;
           td.title = a1;
-          td.textContent = v === null || v === undefined ? '' : v;
-          td.addEventListener('click', async (ev) => {
-            const currentValue = td.textContent || '';
-            let initial = currentValue;
-            try {
-              const f = await getFormula(a1);
-              if (f) initial = f;                 // show formula instead of value if it exists
-            } catch (e) {
-              // ignore; fall back to currentValue
-            }
+          td.textContent = (v === null || v === undefined) ? '' : v;
 
+          td.addEventListener('click', async () => {
+            const f = await getFormula(a1).catch(() => null);
+            const initial = f || td.textContent || '';
             const input = prompt(`Edit ${a1}\nEnter value or a formula starting with "="`, initial);
             if (input === null) return;
             try {
@@ -169,6 +214,7 @@
               showStatus(`Error updating ${a1}: ${e.message}`, true);
             }
           });
+
           tr.appendChild(td);
         }
         tbody.appendChild(tr);
@@ -189,7 +235,6 @@
       }
     }
 
-    // --- Wire up controls ---
     document.getElementById('apply').addEventListener('click', async () => {
       const cell = document.getElementById('cell').value.trim();
       const val = document.getElementById('val').value;
@@ -207,9 +252,8 @@
     document.getElementById('addRow').addEventListener('click', async () => {
       try {
         const sheet = await apiGet('/sheet');
-        const newRow1 = sheet.n_rows + 1;                  // 1-based
-        // touch first cell of new row to force expansion
-        await apiPost('/value', { cell: `A${newRow1}`, value: null });
+        const newRow1 = sheet.n_rows + 1;
+        await apiPost('/value', { cell: `A${newRow1}`, value: null }); // auto-expand
         await loadAndRender();
         showStatus(`Added row ${newRow1}`);
       } catch (e) {
@@ -221,9 +265,8 @@
     document.getElementById('addCol').addEventListener('click', async () => {
       try {
         const sheet = await apiGet('/sheet');
-        const newColLetter = idxToCol(sheet.n_cols);       // next index
-        // touch top cell of new column to force expansion
-        await apiPost('/value', { cell: `${newColLetter}1`, value: null });
+        const newColLetter = idxToCol(sheet.n_cols);
+        await apiPost('/value', { cell: `${newColLetter}1`, value: null }); // auto-expand
         await loadAndRender();
         showStatus(`Added column ${newColLetter}`);
       } catch (e) {
@@ -234,7 +277,6 @@
 
     document.getElementById('refresh').addEventListener('click', loadAndRender);
 
-    // Initial load
     loadAndRender();
   </script>
 </body>
