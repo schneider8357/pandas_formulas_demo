@@ -1,20 +1,27 @@
+# tests.py
 import requests
+from requests.auth import HTTPBasicAuth
 from pprint import pprint
 
 BASE = "http://127.0.0.1:8000"
+AUTH = HTTPBasicAuth("admin", "123")  # Make sure server runs with APP_USER=admin APP_PASS=123
+
+# Use a session so we don't repeat auth every time
+session = requests.Session()
+session.auth = AUTH
 
 def post_value(cell, value):
-    r = requests.post(f"{BASE}/value", json={"cell": cell, "value": value})
+    r = session.post(f"{BASE}/value", json={"cell": cell, "value": value})
     r.raise_for_status()
     return r.json()
 
 def post_formula(cell, formula):
-    r = requests.post(f"{BASE}/formula", json={"cell": cell, "formula": formula})
+    r = session.post(f"{BASE}/formula", json={"cell": cell, "formula": formula})
     r.raise_for_status()
     return r.json()
 
 def get_sheet():
-    r = requests.get(f"{BASE}/sheet")
+    r = session.get(f"{BASE}/sheet")
     r.raise_for_status()
     return r.json()
 

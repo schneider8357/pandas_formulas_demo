@@ -1,19 +1,34 @@
 from typing import Any, List, Dict
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends, HTTPException
 from fastapi.responses import FileResponse
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel
 import pandas as pd
+import os, secrets
 
 from spreadsheet import Spreadsheet
 
+security = HTTPBasic()
 
-app = FastAPI(title="Spreadsheet API + UI")
+def verify(credentials: HTTPBasicCredentials = Depends(security)):
+    user = os.getenv("APP_USER", "admin")
+    pw   = os.getenv("APP_PASS", "secret")
+    ok_user = secrets.compare_digest(credentials.username, user)
+    ok_pass = secrets.compare_digest(credentials.password, pw)
+    if not (ok_user and ok_pass):
+        # Important: include WWW-Authenticate so browsers show login prompt
+        raise HTTPException(status_code=401, detail="Unauthorized",
+                            headers={"WWW-Authenticate": "Basic"})
+    return True
+
+app = FastAPI(title="Spreadsheet API + UI", dependencies=[Depends(verify)])
+
 ss = Spreadsheet(rows=20, cols=20)
+
 
 class SetValuePayload(BaseModel):
     cell: str
     value: Any
-
 
 class SetFormulaPayload(BaseModel):
     cell: str

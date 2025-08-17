@@ -5,7 +5,12 @@ Minimal Excel-like spreadsheet engine with formulas, exposed via FastAPI and a t
 ## Run (no Docker)
 
 ```bash
-python3 -m venv .venv source .venv/bin/activate pip install -r requirements.txt uvicorn app:app --reload # open http://127.0.0.1:8000 (UI at "/")
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+APP_USER=admin APP_PASS=123 uvicorn app:app --reload
+# open http://127.0.0.1:8000 (UI at "/")
+# use credentials admin 123
 ```
 
 Optional API test (in another terminal, with server running):
@@ -17,7 +22,9 @@ python tests.py
 ## Run (Docker)
 
 ```bash
-docker build -t spreadsheet-app . docker run --rm -p 8000:8000 spreadsheet-app # open http://127.0.0.1:8000
+docker run -e APP_USER=admin -e APP_PASS=123 --rm -p 8000:8000 schneider8357/pandas-formulas-demo
+# open http://127.0.0.1:8000
+# use credentials admin 123
 ```
 
 ## Endpoints (brief)
