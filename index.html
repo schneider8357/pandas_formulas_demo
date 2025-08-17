@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Spreadsheet UI (minimal)</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 20px; }
+    h1 { font-size: 18px; margin: 0 0 12px; }
+    .controls { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; align-items: center; }
+    .controls input { padding: 6px 8px; }
+    .controls button { padding: 6px 10px; cursor: pointer; }
+    table { border-collapse: collapse; width: 100%; max-width: 100%; table-layout: fixed; }
+    th, td { border: 1px solid #ddd; padding: 6px 8px; text-overflow: ellipsis; overflow: hidden; white-space: nowrap; }
+    th { background: #f5f5f5; position: sticky; top: 0; }
+    td:hover { background: #fff9db; cursor: pointer; }
+    .muted { color: #666; }
+    #status { margin-top: 10px; min-height: 18px; }
+    .rownum { background: #fafafa; width: 46px; text-align: right; color: #666; }
+  </style>
+</head>
+<body>
+  <h1>Spreadsheet (API client)</h1>
+
+  <div class="controls">
+    <label>Cell <input id="cell" placeholder="e.g. B3" /></label>
+    <label>Value/Formula <input id="val" placeholder='123 or =SUM(A1:A3)' size="28" /></label>
+    <button id="apply">Apply</button>
+    <button id="addRow">Add Row</button>
+    <button id="addCol">Add Column</button>
+    <button id="refresh">Refresh</button>
+    <span class="muted">Tip: click any cell to edit inline (enter value or a formula starting with "=").</span>
+  </div>
+
+  <div id="sheetWrap">
+    <table id="sheet"></table>
+  </div>
+
+  <div id="status" class="muted"></div>
+
+  <script>
+    // --- CONFIG ---
+    // If your API runs on the same origin, you can set BASE = ''.
+    // Otherwise, put your FastAPI base here:
+    const BASE = 'http://127.0.0.1:8000';
+
+    // --- Helpers ---
+    function showStatus(msg, isError=false) {
+      const el = document.getElementById('status');
+      el.textContent = msg || '';
+      el.style.color = isError ? '#b00020' : '#666';
+    }
+
+    function idxToCol(idx) {
+      // 0 -> A, 25 -> Z, 26 -> AA ...
+      let s = '';
+      idx = idx + 1;
+      while (idx > 0) {
+        let r = (idx - 1) % 26;
+        s = String.fromCharCode(65 + r) + s;
+        idx = Math.floor((idx - 1) / 26);
+      }
+      return s;
+    }
+
+    function colToIdx(col) {
+      // A -> 0, Z -> 25, AA -> 26 ...
+      let n = 0;
+      for (const ch of col.toUpperCase()) {
+        n = n * 26 + (ch.charCodeAt(0) - 64);
+      }
+      return n - 1;
+    }
+
+    function parseCell(a1) {
+      const m = String(a1).trim().match(/^([A-Za-z]+)(\d+)$/);
+      if (!m) throw new Error('Invalid cell: ' + a1);
+      return { col: m[1].toUpperCase(), row: parseInt(m[2], 10) };
+    }
+
+    async function apiGet(path) {
+      const r = await fetch(BASE + path);
+      if (!r.ok) throw new Error(await r.text());
+      return r.json();
+    }
+    async function apiPost(path, body) {
+      const r = await fetch(BASE + path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      return r.json();
+    }
+
+    async function getFormula(cell) {
+        const res = await apiGet(`/formula/${cell}`);
+        return res.formula ?? null;
+    }
+
+
+    async function setCell(cell, valueOrFormula) {
+      if (String(valueOrFormula).trim().startsWith('=')) {
+        return apiPost('/formula', { cell, formula: String(valueOrFormula).trim() });
+      } else {
+        // Try to cast numbers if they look numeric; otherwise leave as string
+        let v = valueOrFormula;
+        if (v === '') v = null;
+        else if (!isNaN(v) && v.trim !== undefined) v = Number(v);
+        return apiPost('/value', { cell, value: v });
+      }
+    }
+
+    function renderSheet(payload) {
+      const { columns, data } = payload;
+      const tbl = document.getElementById('sheet');
+      tbl.innerHTML = '';
+
+      // header
+      const thead = document.createElement('thead');
+      const hr = document.createElement('tr');
+      const rowHdr = document.createElement('th');
+      rowHdr.className = 'rownum';
+      rowHdr.textContent = '#';
+      hr.appendChild(rowHdr);
+      for (let c = 0; c < columns.length; c++) {
+        const th = document.createElement('th');
+        th.textContent = columns[c];
+        hr.appendChild(th);
+      }
+      thead.appendChild(hr);
+      tbl.appendChild(thead);
+
+      // body
+      const tbody = document.createElement('tbody');
+      for (let r = 0; r < data.length; r++) {
+        const tr = document.createElement('tr');
+        const rn = document.createElement('td');
+        rn.className = 'rownum';
+        rn.textContent = (r + 1).toString();
+        tr.appendChild(rn);
+
+        for (let c = 0; c < columns.length; c++) {
+          const td = document.createElement('td');
+          const colLetter = columns[c]; // server already gives A,B,C...
+          const a1 = `${colLetter}${r + 1}`;
+          const v = data[r][c];
+          td.dataset.cell = a1;
+          td.title = a1;
+          td.textContent = v === null || v === undefined ? '' : v;
+          td.addEventListener('click', async (ev) => {
+            const currentValue = td.textContent || '';
+            let initial = currentValue;
+            try {
+              const f = await getFormula(a1);
+              if (f) initial = f;                 // show formula instead of value if it exists
+            } catch (e) {
+              // ignore; fall back to currentValue
+            }
+
+            const input = prompt(`Edit ${a1}\nEnter value or a formula starting with "="`, initial);
+            if (input === null) return;
+            try {
+              await setCell(a1, input);
+              await loadAndRender();
+              showStatus(`Updated ${a1}`);
+            } catch (e) {
+              console.error(e);
+              showStatus(`Error updating ${a1}: ${e.message}`, true);
+            }
+          });
+          tr.appendChild(td);
+        }
+        tbody.appendChild(tr);
+      }
+      tbl.appendChild(tbody);
+    }
+
+    async function loadAndRender() {
+      showStatus('Loading...');
+      try {
+        const sheet = await apiGet('/sheet');
+        renderSheet(sheet);
+        showStatus(`Loaded ${sheet.n_rows} rows × ${sheet.n_cols} cols`);
+        return sheet;
+      } catch (e) {
+        console.error(e);
+        showStatus('Failed to load: ' + e.message, true);
+      }
+    }
+
+    // --- Wire up controls ---
+    document.getElementById('apply').addEventListener('click', async () => {
+      const cell = document.getElementById('cell').value.trim();
+      const val = document.getElementById('val').value;
+      if (!cell) return showStatus('Enter a cell like B3', true);
+      try {
+        await setCell(cell, val);
+        await loadAndRender();
+        showStatus(`Applied to ${cell}`);
+      } catch (e) {
+        console.error(e);
+        showStatus('Error: ' + e.message, true);
+      }
+    });
+
+    document.getElementById('addRow').addEventListener('click', async () => {
+      try {
+        const sheet = await apiGet('/sheet');
+        const newRow1 = sheet.n_rows + 1;                  // 1-based
+        // touch first cell of new row to force expansion
+        await apiPost('/value', { cell: `A${newRow1}`, value: null });
+        await loadAndRender();
+        showStatus(`Added row ${newRow1}`);
+      } catch (e) {
+        console.error(e);
+        showStatus('Error adding row: ' + e.message, true);
+      }
+    });
+
+    document.getElementById('addCol').addEventListener('click', async () => {
+      try {
+        const sheet = await apiGet('/sheet');
+        const newColLetter = idxToCol(sheet.n_cols);       // next index
+        // touch top cell of new column to force expansion
+        await apiPost('/value', { cell: `${newColLetter}1`, value: null });
+        await loadAndRender();
+        showStatus(`Added column ${newColLetter}`);
+      } catch (e) {
+        console.error(e);
+        showStatus('Error adding column: ' + e.message, true);
+      }
+    });
+
+    document.getElementById('refresh').addEventListener('click', loadAndRender);
+
+    // Initial load
+    loadAndRender();
+  </script>
+</body>
+</html>
